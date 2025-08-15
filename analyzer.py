@@ -30,15 +30,7 @@ class AuditStatsAnalyzer:
         logger.info("审核统计分析器初始化完成")
     
     def get_overview_stats(self, start_date: str = None, end_date: str = None) -> Dict[str, Any]:
-        """获取整体概览统计
-        
-        Args:
-            start_date: 开始日期 (YYYY-MM-DD)
-            end_date: 结束日期 (YYYY-MM-DD)
-            
-        Returns:
-            整体概览统计数据
-        """
+        """获取整体概览统计"""
         logger.info(f"开始获取整体概览统计，时间范围: {start_date} - {end_date}")
         start_time = time.time()
         
@@ -56,8 +48,11 @@ class AuditStatsAnalyzer:
             # 图片审核统计
             image_stats = self._get_image_overview(date_filter, params)
             
-            # 多媒体审核统计
-            multimedia_stats = self._get_multimedia_overview(date_filter, params)
+            # 多媒体审核统计 - 为多媒体查询使用特定的过滤条件
+            multimedia_date_filter = ""
+            if start_date and end_date:
+                multimedia_date_filter = " WHERE rt.created_at BETWEEN %s AND %s"
+            multimedia_stats = self._get_multimedia_overview(multimedia_date_filter, params)
             
             # 系统健康状态
             system_health = self._get_system_health()
@@ -98,12 +93,12 @@ class AuditStatsAnalyzer:
         # 时间趋势
         trend_query = f"""
         SELECT 
-            DATE(created_at) as date,
+            created_at::date as date,
             COUNT(*) as daily_total,
             COUNT(CASE WHEN verdict = '不合规' THEN 1 END) as daily_violations
         FROM audit_results
         {date_filter}
-        GROUP BY DATE(created_at)
+        GROUP BY created_at::date
         ORDER BY date DESC
         LIMIT 30
         """
@@ -157,7 +152,7 @@ class AuditStatsAnalyzer:
     
     def _get_multimedia_overview(self, date_filter: str, params: List) -> Dict[str, Any]:
         """获取多媒体审核概览"""
-        # 任务统计
+        # 任务统计 - 修改这里，添加表别名
         task_query = f"""
         SELECT 
             COUNT(*) as total_tasks,
@@ -166,7 +161,7 @@ class AuditStatsAnalyzer:
             COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
             SUM(violation_count) as total_violations,
             AVG(progress) as avg_progress
-        FROM review_tasks
+        FROM review_tasks rt
         {date_filter}
         """
         task_result = self.db.execute_query(task_query, params, fetch_one=True)
@@ -205,9 +200,9 @@ class AuditStatsAnalyzer:
         # 今日审核量
         today_audits_query = """
         SELECT 
-            (SELECT COUNT(*) FROM audit_results WHERE DATE(created_at) = %s) as url_audits,
-            (SELECT COUNT(*) FROM image_audit_results WHERE DATE(created_at) = %s) as image_audits,
-            (SELECT COUNT(*) FROM review_tasks WHERE DATE(created_at) = %s) as multimedia_tasks
+            (SELECT COUNT(*) FROM audit_results WHERE created_at::date = %s) as url_audits,
+            (SELECT COUNT(*) FROM image_audit_results WHERE created_at::date = %s) as image_audits,
+            (SELECT COUNT(*) FROM review_tasks WHERE created_at::date = %s) as multimedia_tasks
         """
         today_result = self.db.execute_query(today_audits_query, (today, today, today), fetch_one=True)
         today_stats = today_result[0] if today_result else {}
@@ -220,19 +215,25 @@ class AuditStatsAnalyzer:
         """
         yesterday = today - timedelta(days=1)
         active_result = self.db.execute_query(active_devices_query, (yesterday,), fetch_one=True)
-        active_devices = active_result[0]['active_devices'] if active_result else 0
+        active_devices = active_result[0].get('active_devices', 0) if active_result else 0
         
         # 错误率统计
         error_rate_query = """
         SELECT 
-            (SELECT COUNT(*) FROM image_audit_results WHERE audit_result = '审核失败' AND DATE(created_at) = %s) as image_errors,
-            (SELECT COUNT(*) FROM review_tasks WHERE status = 'failed' AND DATE(created_at) = %s) as task_errors
+            (SELECT COUNT(*) FROM image_audit_results WHERE audit_result = '审核失败' AND created_at::date = %s) as image_errors,
+            (SELECT COUNT(*) FROM review_tasks WHERE status = 'failed' AND created_at::date = %s) as task_errors
         """
         error_result = self.db.execute_query(error_rate_query, (today, today), fetch_one=True)
         error_stats = error_result[0] if error_result else {}
         
-        total_today = today_stats.get('url_audits', 0) + today_stats.get('image_audits', 0)
-        total_errors = error_stats.get('image_errors', 0) + error_stats.get('task_errors', 0)
+        # 安全地处理可能的 None 值
+        url_audits = today_stats.get('url_audits', 0) or 0
+        image_audits = today_stats.get('image_audits', 0) or 0
+        image_errors = error_stats.get('image_errors', 0) or 0
+        task_errors = error_stats.get('task_errors', 0) or 0
+        
+        total_today = url_audits + image_audits
+        total_errors = image_errors + task_errors
         
         return {
             'audits_today': total_today,
@@ -243,19 +244,28 @@ class AuditStatsAnalyzer:
             'system_uptime': 1.0,  # 简化处理
             'last_updated': datetime.now().isoformat()
         }
-    
+
     def _calculate_summary(self, url_stats: Dict, image_stats: Dict, multimedia_stats: Dict) -> Dict[str, Any]:
         """计算汇总信息"""
-        total_audits = url_stats['total'] + image_stats['total']
-        total_violations = url_stats['violations'] + image_stats['violations'] + multimedia_stats['total_violations']
+        # 安全地获取数值，处理 None 的情况
+        url_total = url_stats.get('total', 0) or 0
+        url_violations = url_stats.get('violations', 0) or 0
+        
+        image_total = image_stats.get('total', 0) or 0
+        image_violations = image_stats.get('violations', 0) or 0
+        
+        multimedia_violations = multimedia_stats.get('total_violations', 0) or 0
+        
+        total_audits = url_total + image_total
+        total_violations = url_violations + image_violations + multimedia_violations
         
         return {
             'total_audits': total_audits,
             'total_violations': total_violations,
             'overall_violation_rate': total_violations / max(total_audits, 1),
-            'url_percentage': url_stats['total'] / max(total_audits, 1),
-            'image_percentage': image_stats['total'] / max(total_audits, 1),
-            'most_active_audit_type': 'url' if url_stats['total'] > image_stats['total'] else 'image'
+            'url_percentage': url_total / max(total_audits, 1),
+            'image_percentage': image_total / max(total_audits, 1),
+            'most_active_audit_type': 'url' if url_total > image_total else 'image'
         }
     
     def get_url_audit_stats(self, start_date: str = None, end_date: str = None) -> Dict[str, Any]:
@@ -618,7 +628,7 @@ class AuditStatsAnalyzer:
             COUNT(DISTINCT file_type) as file_types,
             SUM(file_size) as total_size,
             AVG(file_size) as avg_size,
-            SUM(violation_count) as total_violations,
+            SUM(rf.violation_count) as total_violations,
             SUM(ocr_blocks_count) as total_ocr_blocks,
             SUM(text_blocks_count) as total_text_blocks,
             SUM(image_blocks_count) as total_image_blocks
@@ -636,7 +646,7 @@ class AuditStatsAnalyzer:
             file_type,
             COUNT(*) as count,
             SUM(file_size) as total_size,
-            SUM(violation_count) as violations
+            SUM(rf.violation_count) as violations
         FROM review_files rf
         JOIN review_tasks rt ON rf.task_id = rt.id
         {date_filter}
@@ -654,7 +664,7 @@ class AuditStatsAnalyzer:
         query = f"""
         SELECT 
             COUNT(*) as total_results,
-            COUNT(DISTINCT violation_type) as violation_types,
+            COUNT(DISTINCT violation_result) as violation_types,
             COUNT(DISTINCT source_type) as source_types,
             AVG(confidence_score) as avg_confidence,
             COUNT(CASE WHEN is_reviewed = true THEN 1 END) as reviewed_count
@@ -670,14 +680,14 @@ class AuditStatsAnalyzer:
         # 违规类型分布
         violation_query = f"""
         SELECT 
-            violation_type,
+            violation_result,
             COUNT(*) as count,
             AVG(confidence_score) as avg_confidence
         FROM review_results rr
         JOIN review_files rf ON rr.file_id = rf.id
         JOIN review_tasks rt ON rf.task_id = rt.id
         {date_filter}
-        GROUP BY violation_type
+        GROUP BY violation_result
         ORDER BY count DESC
         """
         

@@ -9,12 +9,20 @@ import logging
 from typing import List, Dict, Set, Optional
 from collections import defaultdict, Counter
 import jieba
-import jieba.analyse
+from dataclasses import dataclass
 
 from config import VIOLATION_PATTERNS
-from models import ViolationInfo, ViolationType
 
 logger = logging.getLogger(__name__)
+
+@dataclass
+class ViolationInfo:
+    """违规信息数据类"""
+    type: str
+    description: str
+    count: int = 0
+    confidence: float = 0.0
+    evidence: Optional[str] = None
 
 class ReasonParser:
     """违规原因解析器"""

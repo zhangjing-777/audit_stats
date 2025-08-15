@@ -153,6 +153,138 @@ class DatabaseManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
+class QueryBuilder:
+    """SQL查询构建器"""
+    
+    def __init__(self):
+        """初始化查询构建器"""
+        self._select_fields = []
+        self._from_table = ""
+        self._where_conditions = []
+        self._order_by = []
+        self._limit = None
+        self._params = []
+    
+    def select(self, fields: str) -> 'QueryBuilder':
+        """设置SELECT字段
+        
+        Args:
+            fields: 选择的字段，如 "*" 或 "field1, field2"
+            
+        Returns:
+            QueryBuilder实例，支持链式调用
+        """
+        self._select_fields.append(fields)
+        return self
+    
+    def from_table(self, table: str) -> 'QueryBuilder':
+        """设置FROM表名
+        
+        Args:
+            table: 表名
+            
+        Returns:
+            QueryBuilder实例，支持链式调用
+        """
+        self._from_table = table
+        return self
+    
+    def where(self, condition: str, *params) -> 'QueryBuilder':
+        """添加WHERE条件
+        
+        Args:
+            condition: WHERE条件
+            *params: 参数
+            
+        Returns:
+            QueryBuilder实例，支持链式调用
+        """
+        self._where_conditions.append(condition)
+        self._params.extend(params)
+        return self
+    
+    def where_between(self, field: str, start_value, end_value) -> 'QueryBuilder':
+        """添加BETWEEN条件
+        
+        Args:
+            field: 字段名
+            start_value: 开始值
+            end_value: 结束值
+            
+        Returns:
+            QueryBuilder实例，支持链式调用
+        """
+        condition = f"{field} BETWEEN %s AND %s"
+        self._where_conditions.append(condition)
+        self._params.extend([start_value, end_value])
+        return self
+    
+    def order_by(self, field: str, direction: str = "ASC") -> 'QueryBuilder':
+        """添加ORDER BY
+        
+        Args:
+            field: 排序字段
+            direction: 排序方向，ASC或DESC
+            
+        Returns:
+            QueryBuilder实例，支持链式调用
+        """
+        self._order_by.append(f"{field} {direction}")
+        return self
+    
+    def limit(self, count: int) -> 'QueryBuilder':
+        """设置LIMIT
+        
+        Args:
+            count: 限制数量
+            
+        Returns:
+            QueryBuilder实例，支持链式调用
+        """
+        self._limit = count
+        return self
+    
+    def build(self) -> tuple:
+        """构建SQL查询和参数
+        
+        Returns:
+            (query, params) 元组
+        """
+        # 构建SELECT部分
+        select_part = "SELECT " + (", ".join(self._select_fields) if self._select_fields else "*")
+        
+        # 构建FROM部分
+        if not self._from_table:
+            raise ValueError("必须指定FROM表名")
+        from_part = f"FROM {self._from_table}"
+        
+        # 构建WHERE部分
+        where_part = ""
+        if self._where_conditions:
+            where_part = "WHERE " + " AND ".join(self._where_conditions)
+        
+        # 构建ORDER BY部分
+        order_part = ""
+        if self._order_by:
+            order_part = "ORDER BY " + ", ".join(self._order_by)
+        
+        # 构建LIMIT部分
+        limit_part = ""
+        if self._limit:
+            limit_part = f"LIMIT {self._limit}"
+        
+        # 组合查询
+        query_parts = [select_part, from_part]
+        if where_part:
+            query_parts.append(where_part)
+        if order_part:
+            query_parts.append(order_part)
+        if limit_part:
+            query_parts.append(limit_part)
+        
+        query = " ".join(query_parts)
+        return query, tuple(self._params)
+    
 def create_db_manager() -> DatabaseManager:
     """创建数据库管理器实例"""
     return DatabaseManager()

@@ -133,10 +133,6 @@ def setup_logging():
     
     return logging.getLogger(__name__)
 
-def create_output_directories():
-    """创建输出目录"""
-    for directory in OUTPUT_CONFIG.values():
-        os.makedirs(directory, exist_ok=True)
 
 def get_timestamp():
     """获取当前时间戳字符串"""
@@ -161,8 +157,6 @@ def validate_date_range(start_date: str, end_date: str) -> bool:
 
 # 初始化配置
 logger = setup_logging()
-create_output_directories()
 
 logger.info("配置文件加载完成")
 logger.info(f"数据库配置: {DATABASE_CONFIG['host']}:{DATABASE_CONFIG['port']}/{DATABASE_CONFIG['database']}")
-logger.info(f"输出目录: {OUTPUT_CONFIG}")
