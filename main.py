@@ -1,13 +1,13 @@
 """
 内容审核统计分析系统 FastAPI 应用
+增加自定义违规类型管理功能
 """
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List
 from datetime import datetime, timedelta
-import logging
 import time
 from contextlib import asynccontextmanager
 
@@ -49,8 +49,8 @@ async def lifespan(app: FastAPI):
 # 创建FastAPI应用
 app = FastAPI(
     title="内容审核统计分析系统",
-    description="提供URL、图片、多媒体内容审核的统计分析接口",
-    version="1.0.0",
+    description="提供URL、图片、多媒体内容审核的统计分析接口，支持自定义违规类型管理",
+    version="1.1.0",
     lifespan=lifespan
 )
 
@@ -63,7 +63,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =============== 响应模型 ===============
+# =============== 请求/响应模型 ===============
 
 class APIResponse(BaseModel):
     """统一API响应模型"""
@@ -72,6 +72,10 @@ class APIResponse(BaseModel):
     error: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.now)
     execution_time: Optional[float] = None
+
+class CustomPatternsRequest(BaseModel):
+    """自定义模式请求模型"""
+    patterns: Dict[str, List[str]] = Field(..., description="自定义违规模式字典")
 
 # =============== 辅助函数 ===============
 
@@ -103,8 +107,13 @@ async def root():
     """根路径"""
     return {
         "service": "内容审核统计分析系统",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "status": "running",
+        "features": [
+            "统计分析",
+            "自定义违规类型管理",
+            "模式配置管理"
+        ],
         "docs": "/docs"
     }
 
@@ -131,7 +140,8 @@ async def get_system_health():
             'database_status': 'healthy' if db_healthy else 'unhealthy',
             'api_status': 'healthy',
             'last_check': datetime.now().isoformat(),
-            'today_stats': today_overview
+            'today_stats': today_overview,
+            'reason_parser_info': analyzer.reason_parser.get_pattern_info()
         }
         
         execution_time = time.time() - start_time
@@ -305,28 +315,113 @@ async def get_multimedia_audit_stats(
             execution_time=execution_time
         )
 
-# =============== 启动配置 ===============
+# =============== 5. 自定义违规类型管理接口 ===============
 
-if __name__ == "__main__":
-    import uvicorn
+@app.get("/patterns/info", response_model=APIResponse)
+async def get_pattern_info():
+    """获取当前违规模式信息"""
+    start_time = time.time()
     
-    print("=" * 60)
-    print("内容审核统计分析系统 FastAPI 服务")
-    print("=" * 60)
-    print("🚀 启动地址: http://localhost:8000")
-    print("📖 API文档: http://localhost:8000/docs")
-    print("🏥 健康检查: http://localhost:8000/health")
-    print("📊 统计功能:")
-    print("   - 整体概览: /stats/overview")
-    print("   - URL审核: /stats/url-audit")
-    print("   - 图片审核: /stats/image-audit")
-    print("   - 多媒体审核: /stats/multimedia-audit")
-    print("=" * 60)
+    try:
+        validate_components()
+        
+        pattern_info = analyzer.reason_parser.get_pattern_info()
+        current_patterns = analyzer.reason_parser.get_current_patterns()
+        
+        result = {
+            'pattern_info': pattern_info,
+            'current_patterns': current_patterns
+        }
+        
+        execution_time = time.time() - start_time
+        
+        return create_api_response(
+            success=True,
+            data=result,
+            execution_time=execution_time
+        )
+        
+    except Exception as e:
+        execution_time = time.time() - start_time
+        logger.error(f"获取模式信息失败: {e}")
+        return create_api_response(
+            success=False,
+            error=str(e),
+            execution_time=execution_time
+        )
+
+@app.post("/patterns/set-custom", response_model=APIResponse)
+async def set_custom_patterns(request: CustomPatternsRequest):
+    """设置自定义违规模式"""
+    start_time = time.time()
     
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+    try:
+        validate_components()
+        
+        success = analyzer.reason_parser.set_custom_patterns(request.patterns)
+        
+        if success:
+            pattern_info = analyzer.reason_parser.get_pattern_info()
+            execution_time = time.time() - start_time
+            
+            logger.info(f"成功设置自定义违规模式，包含 {len(request.patterns)} 个类型")
+            
+            return create_api_response(
+                success=True,
+                data={
+                    'message': '自定义违规模式设置成功',
+                    'pattern_info': pattern_info
+                },
+                execution_time=execution_time
+            )
+        else:
+            execution_time = time.time() - start_time
+            return create_api_response(
+                success=False,
+                error="自定义违规模式设置失败",
+                execution_time=execution_time
+            )
+        
+    except Exception as e:
+        execution_time = time.time() - start_time
+        logger.error(f"设置自定义违规模式失败: {e}")
+        return create_api_response(
+            success=False,
+            error=str(e),
+            execution_time=execution_time
+        )
+
+
+@app.post("/patterns/reset-default", response_model=APIResponse)
+async def reset_to_default_patterns():
+    """重置为默认违规模式"""
+    start_time = time.time()
+    
+    try:
+        validate_components()
+        
+        analyzer.reason_parser.reset_to_default_patterns()
+        pattern_info = analyzer.reason_parser.get_pattern_info()
+        
+        execution_time = time.time() - start_time
+        
+        logger.info("成功重置为默认违规模式")
+        
+        return create_api_response(
+            success=True,
+            data={
+                'message': '已重置为默认违规模式',
+                'pattern_info': pattern_info
+            },
+            execution_time=execution_time
+        )
+        
+    except Exception as e:
+        execution_time = time.time() - start_time
+        logger.error(f"重置为默认模式失败: {e}")
+        return create_api_response(
+            success=False,
+            error=str(e),
+            execution_time=execution_time
+        )
+
