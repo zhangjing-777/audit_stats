@@ -1,0 +1,37 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
+*.pid
+docker-compose.override.yml
+
+# Bytecode cache
+*.pyo
+
+# Env
+venv/
+.venv/
+
+# Uvicorn reload
+.reload
+
+*.ipynb
+
+api.py
+sum.py
+reports
+logs
+visualizations
